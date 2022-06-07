@@ -205,537 +205,6 @@ def Singleplayer():
                 mouse.hovered_entity.hp -= 10
                 mouse.hovered_entity.blink(color.red) 
 
-#multiplayer game functions
-def Multiplayer():
-    global Player2, Enemy2, Bullet2, Network2, n, Floor2, FloorCube2, Wall2, Map2, floor2, receive, update, input, main, player2, prev_pos, prev_dir, enemies2, shoot
-    
-    #main player class
-    class Player2(FirstPersonController):
-        def __init__(self, position: ursina.Vec3):
-            super().__init__(
-                position=position,
-                model="cube",
-                texture="white_cube",
-                jump_height=2.5,
-                jump_duration=0.4,
-                origin_y=-2,
-                collider="box", 
-                speed=5
-            )
-            self.cursor.color = ursina.color.rgb(255, 0, 0, 122)
-
-            self.gun = ursina.Entity(
-                parent=ursina.camera,
-                position=(0.95, -0.85, 2),
-                scale=0.16,
-                rotation=(0, -86, 0),
-                origin_z=-.5,
-                model="assets/objects/gun3.obj",
-                color=color.rgb(69, 69, 69),
-                on_cooldown=False
-            )
-            self.hand = Entity(
-                model='cube',
-                texture='white_cube',
-                parent=camera, 
-                position=(0.75, -0.4, 0.25), 
-                scale=(.3,.2,1), 
-                origin_z=-.5                 
-            ) 
-            self.healthbar_pos = ursina.Vec2(0, 0.45)
-            self.healthbar_size = ursina.Vec2(0.8, 0.04)
-            self.healthbar_bg = ursina.Entity(
-                parent=ursina.camera.ui,
-                model="quad",
-                color=ursina.color.rgb(255, 0, 0),
-                position=self.healthbar_pos,
-                scale=self.healthbar_size
-            )
-            self.healthbar = ursina.Entity(
-                parent=ursina.camera.ui,
-                model="quad",
-                color=ursina.color.rgb(0, 255, 0),
-                position=self.healthbar_pos,
-                scale=self.healthbar_size
-            )
-            self.health = 100
-            self.death_message_shown = False
-
-        def death(self):
-            self.death_message_shown = True
-
-            ursina.destroy(self.gun)
-            self.rotation = 0
-            self.camera_pivot.world_rotation_x = -45
-            self.world_position = ursina.Vec3(0, 7, -35)
-            self.cursor.color = ursina.color.rgb(0, 0, 0, a=0)
-
-            ursina.Text(
-                text="You are dead!",
-                origin=ursina.Vec2(0, 0),
-                scale=3
-            )
-
-        def update(self):
-            self.healthbar.scale_x = self.health / 100 * self.healthbar_size.x
-
-            if self.health <= 0:
-                if not self.death_message_shown:
-                    self.death()
-            else:
-                super().update()
-
-            if held_keys['shift']:
-                self.speed=12
-            else:
-                self.speed=5
-
-    #enemy class
-    class Enemy2(ursina.Entity):
-        def __init__(self, position: ursina.Vec3, identifier: str, username: str):
-            super().__init__(
-                position=position,
-                model="cube",
-                origin_y=-0.5,
-                collider="box",
-                texture="white_cube",
-                color=ursina.color.color(0, 0, 1),
-                scale=ursina.Vec3(1, 2, 1)
-            )
-
-            self.gun = ursina.Entity(
-                parent=self,
-                position=ursina.Vec3(.5,-.25,.25),
-                scale=ursina.Vec3(.3,.2,1),
-                model="cube",
-                texture="white_cube",
-                color=ursina.color.color(0, 0, 0.4)
-            )
-            
-            self.hand = Entity(
-                model='cube',
-                texture='white_cube',
-                parent=camera, 
-                position=(0.7, -0.4, 0.25), 
-                scale=(.3,.2,1), 
-                origin_z=-.5, 
-            )
-
-            self.name_tag = ursina.Text(
-                parent=self,
-                text=username,
-                position=ursina.Vec3(0, 1.3, 0),
-                scale=ursina.Vec2(5, 3),
-                billboard=True,
-                origin=ursina.Vec2(0, 0)
-            )
-
-            self.health = 100
-            self.id = identifier
-            self.username = username
-
-        def update(self):
-            try:
-                color_saturation = 1 - self.health / 100
-            except AttributeError:
-                self.health = 100
-                color_saturation = 1 - self.health / 100
-
-            self.color = ursina.color.color(0, color_saturation, 1)
-
-            if self.health <= 0:
-                ursina.destroy(self)
-
-    #bullet entity class
-    class Bullet2(ursina.Entity):
-        def __init__(self, position: ursina.Vec3, direction: float, x_direction: float, network, damage: int = random.randint(5, 20), slave=False):
-            speed = 60
-            dir_rad = ursina.math.radians(direction)
-            x_dir_rad = ursina.math.radians(x_direction)
-
-            self.velocity = ursina.Vec3(
-                ursina.math.sin(dir_rad) * ursina.math.cos(x_dir_rad),
-                ursina.math.sin(x_dir_rad),
-                ursina.math.cos(dir_rad) * ursina.math.cos(x_dir_rad)
-            ) * speed
-
-            super().__init__(
-                position=position + self.velocity / speed,
-                model="sphere",
-                collider="box",
-                color=color.rgb(0, 0, 0),
-                scale=0.2
-            )
-
-            self.damage = damage
-            self.direction = direction
-            self.x_direction = x_direction
-            self.slave = slave
-            self.network = network
-
-        def update(self):
-            self.position += self.velocity * ursina.time.dt
-            hit_info = self.intersects()
-
-            if hit_info.hit:
-                if not self.slave:
-                    for entity in hit_info.entities:
-                        if isinstance(entity, Enemy2):
-                            entity.health -= self.damage
-                            self.network.send_health(entity)
-
-                ursina.destroy(self)
-
-    #network class for validation to server
-    class Network2:
-        
-        def __init__(self, server_addr: str, server_port: int, username: str):
-            self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.addr = server_addr
-            self.port = server_port
-            self.username = username
-            self.recv_size = 2048
-            self.id = 0
-
-        def settimeout(self, value):
-            self.client.settimeout(value)
-
-        def connect(self):
-        
-            self.client.connect((self.addr, self.port))
-            self.id = self.client.recv(self.recv_size).decode("utf8")
-            self.client.send(self.username.encode("utf8"))
-
-        def receive_info(self):
-            try:
-                msg = self.client.recv(self.recv_size)
-            except socket.error as e:
-                print(e)
-
-            if not msg:
-                return None
-
-            msg_decoded = msg.decode("utf8")
-
-            left_bracket_index = msg_decoded.index("{")
-            right_bracket_index = msg_decoded.index("}") + 1
-            msg_decoded = msg_decoded[left_bracket_index:right_bracket_index]
-
-            msg_json = json.loads(msg_decoded)
-
-            return msg_json
-
-        def send_player(self, player2: Player2):
-            player2_info = {
-                "object": "player",
-                "id": self.id,
-                "position": (player2.world_x, player2.world_y, player2.world_z),
-                "rotation": player2.rotation_y,
-                "health": player2.health,
-                "joined": False,
-                "left": False
-            }
-            player2_info_encoded = json.dumps(player2_info).encode("utf8")
-
-            try:
-                self.client.send(player2_info_encoded)
-            except socket.error as e:
-                print(e)
-
-        def send_bullet(self, bullet: Bullet2):
-            bullet_info = {
-                "object": "bullet",
-                "position": (bullet.world_x, bullet.world_y, bullet.world_z),
-                "damage": bullet.damage,
-                "direction": bullet.direction,
-                "x_direction": bullet.x_direction
-            }
-
-            bullet_info_encoded = json.dumps(bullet_info).encode("utf8")
-
-            try:
-                self.client.send(bullet_info_encoded)
-            except socket.error as e:
-                print(e)
-
-        def send_health(self, player2: Enemy2):
-            health_info = {
-                "object": "health_update",
-                "id": player2.id,
-                "health": player2.health
-            }
-
-            health_info_encoded = json.dumps(health_info).encode("utf8")
-
-            try:
-                self.client.send(health_info_encoded)
-            except socket.error as e:
-                print(e)
-    
-    
-    username = 'Block'
-
-    #validation for server adress
-    while True:
-
-        #change address to ip for LAN multiplayer
-        server_addr = '127.0.0.1' 
-        server_port = '8000'
-
-        try:
-            server_port = int(server_port)
-        except ValueError:
-            continue
-
-        n = Network2(server_addr, server_port, username)
-        n.settimeout(5)
-
-        error_occurred = False
-
-        try:
-            n.connect()
-        except ConnectionRefusedError:
-            error_occurred = True
-        except socket.timeout:
-            error_occurred = True
-        except socket.gaierror:
-            error_occurred = True
-        finally:
-            n.settimeout(None)
-
-        if not error_occurred:
-            break
-
-    class FloorCube2(ursina.Entity):
-        def __init__(self, position):
-            super().__init__(
-                position=position,
-                scale=2,
-                model="cube",
-                texture=("assets/images/floor.png"),
-                collider="box"
-            )
-            self.texture.filtering = None
-
-
-    class Floor2:
-        def __init__(self):
-            dark1 = True
-            for z in range(-30, 30, 2):
-                dark2 = not dark1
-                for x in range(-30, 30, 2):
-                    cube = FloorCube2(ursina.Vec3(x, 0, z))
-                    if dark2:
-                        cube.color = ursina.color.color(0, 0.2, 0.8)
-                    else:
-                        cube.color = ursina.color.color(0, 0.2, 1)
-                    dark2 = not dark2
-                dark1 = not dark1
-
-
-    class Wall2(ursina.Entity):
-        def __init__(self, position):
-            super().__init__(
-                position=position,
-                scale=2,
-                model="cube",
-                texture=("assets/images/wall.png"),
-                origin_y=-0.5
-            )
-            self.texture.filtering = None
-            self.collider = ursina.BoxCollider(self, size=ursina.Vec3(1, 2, 1))
-
-    class Map2:
-        def __init__(self):
-            for y in range(1, 4, 2):
-                Wall2(ursina.Vec3(6, y, 0))
-                Wall2(ursina.Vec3(6, y, 2))
-                Wall2(ursina.Vec3(6, y, 4))
-                Wall2(ursina.Vec3(6, y, 6))
-                Wall2(ursina.Vec3(6, y, 8))
-
-                Wall2(ursina.Vec3(4, y, 8))
-                Wall2(ursina.Vec3(2, y, 8))
-                Wall2(ursina.Vec3(0, y, 8))
-                Wall2(ursina.Vec3(-2, y, 8))
-
-                Wall2(ursina.Vec3(-6, y, 0))
-                Wall2(ursina.Vec3(-6, y, 2))
-                Wall2(ursina.Vec3(-6, y, 4))
-                Wall2(ursina.Vec3(-6, y, 6))
-                Wall2(ursina.Vec3(-6, y, 8))
-
-                Wall2(ursina.Vec3(16, y, 0))
-                Wall2(ursina.Vec3(16, y, 2))
-                Wall2(ursina.Vec3(16, y, 4))
-                Wall2(ursina.Vec3(16, y, 6))
-                Wall2(ursina.Vec3(16, y, 8))
-
-                Wall2(ursina.Vec3(4, y, 8))
-                Wall2(ursina.Vec3(2, y, 8))
-                Wall2(ursina.Vec3(0, y, 8))
-                Wall2(ursina.Vec3(-2, y, 8))
-
-                Wall2(ursina.Vec3(-26, y, 0))
-                Wall2(ursina.Vec3(-26, y, 2))
-                Wall2(ursina.Vec3(-26, y, 4))
-                Wall2(ursina.Vec3(-26, y, 6))
-                Wall2(ursina.Vec3(-26, y, 8))
-
-                Wall2(ursina.Vec3(6, y, 12))
-                Wall2(ursina.Vec3(6, y, 14))
-                Wall2(ursina.Vec3(6, y, 16))
-                Wall2(ursina.Vec3(6, y, 18))
-                Wall2(ursina.Vec3(6, y, 20))
-
-                Wall2(ursina.Vec3(16, y, 16))
-                Wall2(ursina.Vec3(5, y, 5))
-                Wall2(ursina.Vec3(-5, y, -5))
-                Wall2(ursina.Vec3(10, y, -3))
-
-                Wall2(ursina.Vec3(-26, y, 20))
-                Wall2(ursina.Vec3(-24, y, 20))
-                Wall2(ursina.Vec3(-22, y, 20))
-                Wall2(ursina.Vec3(-20, y, 20))
-                Wall2(ursina.Vec3(-18, y, 20))
-
-                Wall2(ursina.Vec3(16, y, 8))
-                Wall2(ursina.Vec3(18, y, 8))
-                Wall2(ursina.Vec3(20, y, 8))
-                Wall2(ursina.Vec3(22, y, 8))
-                Wall2(ursina.Vec3(24, y, 8))
-
-                Wall2(ursina.Vec3(0, y, -10))
-                Wall2(ursina.Vec3(-2, y, -10))
-                Wall2(ursina.Vec3(-4, y, -10))
-                Wall2(ursina.Vec3(-6, y, -10))
-
-                Wall2(ursina.Vec3(-26, y, -20))
-                Wall2(ursina.Vec3(-24, y, -20))
-                Wall2(ursina.Vec3(-22, y, -20))
-                Wall2(ursina.Vec3(-20, y, -20))
-                Wall2(ursina.Vec3(-18, y, -20))
-
-
-    floor2 = Floor2()
-    Map2()
-
-    player2 = Player2(ursina.Vec3(0, 1, 0))
-    prev_pos = player2.world_position
-    prev_dir = player2.world_rotation_y
-    enemies2 = []
-    def receive():
-        while True:
-            try:
-                info = n.receive_info()
-            except Exception as e:
-                print(e)
-                continue
-
-            if not info:
-                sys.exit()
-
-            if info["object"] == "player2":
-                enemy_id = info["id"]
-
-                if info["joined"]:
-                    new_enemy = Enemy2(ursina.Vec3(*info["position"]), enemy_id, info["username"])
-                    new_enemy.health = info["health"]
-                    enemies2.append(new_enemy)
-                    continue
-
-                enemy = None
-
-                for e in enemies2:
-                    if e.id == enemy_id:
-                        enemy = e
-                        break
-
-                if not enemy:
-                    continue
-
-                if info["left"]:
-                    enemies2.remove(enemy)
-                    ursina.destroy(enemy)
-                    continue
-
-                enemy.world_position = ursina.Vec3(*info["position"])
-                enemy.rotation_y = info["rotation"]
-
-            elif info["object"] == "bullet":
-                b_pos = ursina.Vec3(*info["position"])
-                b_dir = info["direction"]
-                b_x_dir = info["x_direction"]
-                b_damage = info["damage"]
-                new_bullet = Bullet2(b_pos, b_dir, b_x_dir, n, b_damage, slave=True)
-                ursina.destroy(new_bullet, delay=2)
-
-            elif info["object"] == "health_update":
-                enemy_id = info["id"]
-
-                enemy = None
-
-                if enemy_id == n.id:
-                    enemy = player2
-                else:
-                    for e in enemies2:
-                        if e.id == enemy_id:
-                            enemy = e
-                            break
-
-                if not enemy:
-                    continue
-
-                enemy.health = info["health"]
-    
-    player2.gun.muzzle_flash = Entity(parent=player2.gun, position=(8, 5, 0), rotation=(0, 0, 0), scale=1, origin=(0, 0), model='cube', color=color.yellow, enabled=False)
-    shootables_parent = Entity()
-    mouse.traverse_target = shootables_parent
-
-    def update():
-        if player2.health > 0:
-            global prev_pos, prev_dir
-
-            if prev_pos != player2.world_position or prev_dir != player2.world_rotation_y:
-                n.send_player(player2)
-
-            prev_pos = player2.world_position
-            prev_dir = player2.world_rotation_y
-
-        if player2.y < -10:
-            player2.y = 60 
-
-    def shoot():
-        if not player2.gun.on_cooldown:
-            player2.gun.on_cooldown = True
-            player2.gun.muzzle_flash.enabled=True
-            invoke(player2.gun.muzzle_flash.disable, delay=.05)
-            invoke(setattr, player2.gun, 'on_cooldown', False, delay=.15)
-            if mouse.hovered_entity and hasattr(mouse.hovered_entity, 'hp'):
-                mouse.hovered_entity.hp -= 10
-                mouse.hovered_entity.blink(color.red)   
-
-    def input(key):
-        if key == "left mouse down" and player2.health > 0:
-            b_pos = player2.position + ursina.Vec3(0, 2, 0)
-            bullet = Bullet2(b_pos, player2.world_rotation_y, -player2.camera_pivot.world_rotation_x, n)
-            n.send_bullet(bullet)
-            shoot()
-            ursina.destroy(bullet, delay=2)
-            Audio('assets/Audio/gun3.wav', loop=False, delay=1)
-        if held_keys['escape']:
-            quit()
-        if key == 'space':
-            Audio('assets/Audio/jump.wav', loop=False)
-
-    def main():
-        msg_thread = threading.Thread(target=receive, daemon=True)
-        msg_thread.start()
-
-
-    if __name__ == "__main__":
-        main()
-
 # main menu
 class MenuButton(Button):
     def __init__(self, text='', **kwargs):
@@ -764,16 +233,16 @@ def start_single():
     Singleplayer()
     gametheme.play()
     
-def start_multi():
-    menu_parent.enabled = False
-    menutheme.pause()
-    Multiplayer()
-    gametheme.play()
+# def start_multi():
+#     menu_parent.enabled = False
+#     menutheme.pause()
+#     Multiplayer()
+#     gametheme.play()
 
 #menu buttons
 main_menu.buttons = [
     MenuButton('Singleplayer', on_click=Func(start_single)),
-    MenuButton('Multiplayer', on_click=Func(start_multi)),
+    # MenuButton('Multiplayer', on_click=Func(start_multi)),
     MenuButton('Options', on_click=Func(setattr, state_handler, 'state', 'options_menu')),
     MenuButton('Quit', on_click=Sequence(Wait(.01), Func(sys.exit))),
 ]
@@ -822,3 +291,533 @@ Sky()
 
 app.run()
 
+#multiplayer game functions
+# def Multiplayer():
+#     global Player2, Enemy2, Bullet2, Network2, n, Floor2, FloorCube2, Wall2, Map2, floor2, receive, update, input, main, player2, prev_pos, prev_dir, enemies2, shoot
+    
+#     #main player class
+#     class Player2(FirstPersonController):
+#         def __init__(self, position: ursina.Vec3):
+#             super().__init__(
+#                 position=position,
+#                 model="cube",
+#                 texture="white_cube",
+#                 jump_height=2.5,
+#                 jump_duration=0.4,
+#                 origin_y=-2,
+#                 collider="box", 
+#                 speed=5
+#             )
+#             self.cursor.color = ursina.color.rgb(255, 0, 0, 122)
+
+#             self.gun = ursina.Entity(
+#                 parent=ursina.camera,
+#                 position=(0.95, -0.85, 2),
+#                 scale=0.16,
+#                 rotation=(0, -86, 0),
+#                 origin_z=-.5,
+#                 model="assets/objects/gun3.obj",
+#                 color=color.rgb(69, 69, 69),
+#                 on_cooldown=False
+#             )
+#             self.hand = Entity(
+#                 model='cube',
+#                 texture='white_cube',
+#                 parent=camera, 
+#                 position=(0.75, -0.4, 0.25), 
+#                 scale=(.3,.2,1), 
+#                 origin_z=-.5                 
+#             ) 
+#             self.healthbar_pos = ursina.Vec2(0, 0.45)
+#             self.healthbar_size = ursina.Vec2(0.8, 0.04)
+#             self.healthbar_bg = ursina.Entity(
+#                 parent=ursina.camera.ui,
+#                 model="quad",
+#                 color=ursina.color.rgb(255, 0, 0),
+#                 position=self.healthbar_pos,
+#                 scale=self.healthbar_size
+#             )
+#             self.healthbar = ursina.Entity(
+#                 parent=ursina.camera.ui,
+#                 model="quad",
+#                 color=ursina.color.rgb(0, 255, 0),
+#                 position=self.healthbar_pos,
+#                 scale=self.healthbar_size
+#             )
+#             self.health = 100
+#             self.death_message_shown = False
+
+#         def death(self):
+#             self.death_message_shown = True
+
+#             ursina.destroy(self.gun)
+#             self.rotation = 0
+#             self.camera_pivot.world_rotation_x = -45
+#             self.world_position = ursina.Vec3(0, 7, -35)
+#             self.cursor.color = ursina.color.rgb(0, 0, 0, a=0)
+
+#             ursina.Text(
+#                 text="You are dead!",
+#                 origin=ursina.Vec2(0, 0),
+#                 scale=3
+#             )
+
+#         def update(self):
+#             self.healthbar.scale_x = self.health / 100 * self.healthbar_size.x
+
+#             if self.health <= 0:
+#                 if not self.death_message_shown:
+#                     self.death()
+#             else:
+#                 super().update()
+
+#             if held_keys['shift']:
+#                 self.speed=12
+#             else:
+#                 self.speed=5
+
+#     #enemy class
+#     class Enemy2(ursina.Entity):
+#         def __init__(self, position: ursina.Vec3, identifier: str, username: str):
+#             super().__init__(
+#                 position=position,
+#                 model="cube",
+#                 origin_y=-0.5,
+#                 collider="box",
+#                 texture="white_cube",
+#                 color=ursina.color.color(0, 0, 1),
+#                 scale=ursina.Vec3(1, 2, 1)
+#             )
+
+#             self.gun = ursina.Entity(
+#                 parent=self,
+#                 position=ursina.Vec3(.5,-.25,.25),
+#                 scale=ursina.Vec3(.3,.2,1),
+#                 model="cube",
+#                 texture="white_cube",
+#                 color=ursina.color.color(0, 0, 0.4)
+#             )
+            
+#             self.hand = Entity(
+#                 model='cube',
+#                 texture='white_cube',
+#                 parent=camera, 
+#                 position=(0.7, -0.4, 0.25), 
+#                 scale=(.3,.2,1), 
+#                 origin_z=-.5, 
+#             )
+
+#             self.name_tag = ursina.Text(
+#                 parent=self,
+#                 text=username,
+#                 position=ursina.Vec3(0, 1.3, 0),
+#                 scale=ursina.Vec2(5, 3),
+#                 billboard=True,
+#                 origin=ursina.Vec2(0, 0)
+#             )
+
+#             self.health = 100
+#             self.id = identifier
+#             self.username = username
+
+#         def update(self):
+#             try:
+#                 color_saturation = 1 - self.health / 100
+#             except AttributeError:
+#                 self.health = 100
+#                 color_saturation = 1 - self.health / 100
+
+#             self.color = ursina.color.color(0, color_saturation, 1)
+
+#             if self.health <= 0:
+#                 ursina.destroy(self)
+
+#     #bullet entity class
+#     class Bullet2(ursina.Entity):
+#         def __init__(self, position: ursina.Vec3, direction: float, x_direction: float, network, damage: int = random.randint(5, 20), slave=False):
+#             speed = 60
+#             dir_rad = ursina.math.radians(direction)
+#             x_dir_rad = ursina.math.radians(x_direction)
+
+#             self.velocity = ursina.Vec3(
+#                 ursina.math.sin(dir_rad) * ursina.math.cos(x_dir_rad),
+#                 ursina.math.sin(x_dir_rad),
+#                 ursina.math.cos(dir_rad) * ursina.math.cos(x_dir_rad)
+#             ) * speed
+
+#             super().__init__(
+#                 position=position + self.velocity / speed,
+#                 model="sphere",
+#                 collider="box",
+#                 color=color.rgb(0, 0, 0),
+#                 scale=0.2
+#             )
+
+#             self.damage = damage
+#             self.direction = direction
+#             self.x_direction = x_direction
+#             self.slave = slave
+#             self.network = network
+
+#         def update(self):
+#             self.position += self.velocity * ursina.time.dt
+#             hit_info = self.intersects()
+
+#             if hit_info.hit:
+#                 if not self.slave:
+#                     for entity in hit_info.entities:
+#                         if isinstance(entity, Enemy2):
+#                             entity.health -= self.damage
+#                             self.network.send_health(entity)
+
+#                 ursina.destroy(self)
+
+#     #network class for validation to server
+#     class Network2:
+        
+#         def __init__(self, server_addr: str, server_port: int, username: str):
+#             self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#             self.addr = server_addr
+#             self.port = server_port
+#             self.username = username
+#             self.recv_size = 2048
+#             self.id = 0
+
+#         def settimeout(self, value):
+#             self.client.settimeout(value)
+
+#         def connect(self):
+        
+#             self.client.connect((self.addr, self.port))
+#             self.id = self.client.recv(self.recv_size).decode("utf8")
+#             self.client.send(self.username.encode("utf8"))
+
+#         def receive_info(self):
+#             try:
+#                 msg = self.client.recv(self.recv_size)
+#             except socket.error as e:
+#                 print(e)
+
+#             if not msg:
+#                 return None
+
+#             msg_decoded = msg.decode("utf8")
+
+#             left_bracket_index = msg_decoded.index("{")
+#             right_bracket_index = msg_decoded.index("}") + 1
+#             msg_decoded = msg_decoded[left_bracket_index:right_bracket_index]
+
+#             msg_json = json.loads(msg_decoded)
+
+#             return msg_json
+
+#         def send_player(self, player2: Player2):
+#             player2_info = {
+#                 "object": "player",
+#                 "id": self.id,
+#                 "position": (player2.world_x, player2.world_y, player2.world_z),
+#                 "rotation": player2.rotation_y,
+#                 "health": player2.health,
+#                 "joined": False,
+#                 "left": False
+#             }
+#             player2_info_encoded = json.dumps(player2_info).encode("utf8")
+
+#             try:
+#                 self.client.send(player2_info_encoded)
+#             except socket.error as e:
+#                 print(e)
+
+#         def send_bullet(self, bullet: Bullet2):
+#             bullet_info = {
+#                 "object": "bullet",
+#                 "position": (bullet.world_x, bullet.world_y, bullet.world_z),
+#                 "damage": bullet.damage,
+#                 "direction": bullet.direction,
+#                 "x_direction": bullet.x_direction
+#             }
+
+#             bullet_info_encoded = json.dumps(bullet_info).encode("utf8")
+
+#             try:
+#                 self.client.send(bullet_info_encoded)
+#             except socket.error as e:
+#                 print(e)
+
+#         def send_health(self, player2: Enemy2):
+#             health_info = {
+#                 "object": "health_update",
+#                 "id": player2.id,
+#                 "health": player2.health
+#             }
+
+#             health_info_encoded = json.dumps(health_info).encode("utf8")
+
+#             try:
+#                 self.client.send(health_info_encoded)
+#             except socket.error as e:
+#                 print(e)
+    
+    
+#     username = 'Block'
+
+#     #validation for server adress
+#     while True:
+
+#         #change address to ip for LAN multiplayer
+#         server_addr = '127.0.0.1' 
+#         server_port = '8000'
+
+#         try:
+#             server_port = int(server_port)
+#         except ValueError:
+#             continue
+
+#         n = Network2(server_addr, server_port, username)
+#         n.settimeout(5)
+
+#         error_occurred = False
+
+#         try:
+#             n.connect()
+#         except ConnectionRefusedError:
+#             error_occurred = True
+#         except socket.timeout:
+#             error_occurred = True
+#         except socket.gaierror:
+#             error_occurred = True
+#         finally:
+#             n.settimeout(None)
+
+#         if not error_occurred:
+#             break
+
+#     class FloorCube2(ursina.Entity):
+#         def __init__(self, position):
+#             super().__init__(
+#                 position=position,
+#                 scale=2,
+#                 model="cube",
+#                 texture=("assets/images/floor.png"),
+#                 collider="box"
+#             )
+#             self.texture.filtering = None
+
+
+#     class Floor2:
+#         def __init__(self):
+#             dark1 = True
+#             for z in range(-30, 30, 2):
+#                 dark2 = not dark1
+#                 for x in range(-30, 30, 2):
+#                     cube = FloorCube2(ursina.Vec3(x, 0, z))
+#                     if dark2:
+#                         cube.color = ursina.color.color(0, 0.2, 0.8)
+#                     else:
+#                         cube.color = ursina.color.color(0, 0.2, 1)
+#                     dark2 = not dark2
+#                 dark1 = not dark1
+
+
+#     class Wall2(ursina.Entity):
+#         def __init__(self, position):
+#             super().__init__(
+#                 position=position,
+#                 scale=2,
+#                 model="cube",
+#                 texture=("assets/images/wall.png"),
+#                 origin_y=-0.5
+#             )
+#             self.texture.filtering = None
+#             self.collider = ursina.BoxCollider(self, size=ursina.Vec3(1, 2, 1))
+
+#     class Map2:
+#         def __init__(self):
+#             for y in range(1, 4, 2):
+#                 Wall2(ursina.Vec3(6, y, 0))
+#                 Wall2(ursina.Vec3(6, y, 2))
+#                 Wall2(ursina.Vec3(6, y, 4))
+#                 Wall2(ursina.Vec3(6, y, 6))
+#                 Wall2(ursina.Vec3(6, y, 8))
+
+#                 Wall2(ursina.Vec3(4, y, 8))
+#                 Wall2(ursina.Vec3(2, y, 8))
+#                 Wall2(ursina.Vec3(0, y, 8))
+#                 Wall2(ursina.Vec3(-2, y, 8))
+
+#                 Wall2(ursina.Vec3(-6, y, 0))
+#                 Wall2(ursina.Vec3(-6, y, 2))
+#                 Wall2(ursina.Vec3(-6, y, 4))
+#                 Wall2(ursina.Vec3(-6, y, 6))
+#                 Wall2(ursina.Vec3(-6, y, 8))
+
+#                 Wall2(ursina.Vec3(16, y, 0))
+#                 Wall2(ursina.Vec3(16, y, 2))
+#                 Wall2(ursina.Vec3(16, y, 4))
+#                 Wall2(ursina.Vec3(16, y, 6))
+#                 Wall2(ursina.Vec3(16, y, 8))
+
+#                 Wall2(ursina.Vec3(4, y, 8))
+#                 Wall2(ursina.Vec3(2, y, 8))
+#                 Wall2(ursina.Vec3(0, y, 8))
+#                 Wall2(ursina.Vec3(-2, y, 8))
+
+#                 Wall2(ursina.Vec3(-26, y, 0))
+#                 Wall2(ursina.Vec3(-26, y, 2))
+#                 Wall2(ursina.Vec3(-26, y, 4))
+#                 Wall2(ursina.Vec3(-26, y, 6))
+#                 Wall2(ursina.Vec3(-26, y, 8))
+
+#                 Wall2(ursina.Vec3(6, y, 12))
+#                 Wall2(ursina.Vec3(6, y, 14))
+#                 Wall2(ursina.Vec3(6, y, 16))
+#                 Wall2(ursina.Vec3(6, y, 18))
+#                 Wall2(ursina.Vec3(6, y, 20))
+
+#                 Wall2(ursina.Vec3(16, y, 16))
+#                 Wall2(ursina.Vec3(5, y, 5))
+#                 Wall2(ursina.Vec3(-5, y, -5))
+#                 Wall2(ursina.Vec3(10, y, -3))
+
+#                 Wall2(ursina.Vec3(-26, y, 20))
+#                 Wall2(ursina.Vec3(-24, y, 20))
+#                 Wall2(ursina.Vec3(-22, y, 20))
+#                 Wall2(ursina.Vec3(-20, y, 20))
+#                 Wall2(ursina.Vec3(-18, y, 20))
+
+#                 Wall2(ursina.Vec3(16, y, 8))
+#                 Wall2(ursina.Vec3(18, y, 8))
+#                 Wall2(ursina.Vec3(20, y, 8))
+#                 Wall2(ursina.Vec3(22, y, 8))
+#                 Wall2(ursina.Vec3(24, y, 8))
+
+#                 Wall2(ursina.Vec3(0, y, -10))
+#                 Wall2(ursina.Vec3(-2, y, -10))
+#                 Wall2(ursina.Vec3(-4, y, -10))
+#                 Wall2(ursina.Vec3(-6, y, -10))
+
+#                 Wall2(ursina.Vec3(-26, y, -20))
+#                 Wall2(ursina.Vec3(-24, y, -20))
+#                 Wall2(ursina.Vec3(-22, y, -20))
+#                 Wall2(ursina.Vec3(-20, y, -20))
+#                 Wall2(ursina.Vec3(-18, y, -20))
+
+
+#     floor2 = Floor2()
+#     Map2()
+
+#     player2 = Player2(ursina.Vec3(0, 1, 0))
+#     prev_pos = player2.world_position
+#     prev_dir = player2.world_rotation_y
+#     enemies2 = []
+#     def receive():
+#         while True:
+#             try:
+#                 info = n.receive_info()
+#             except Exception as e:
+#                 print(e)
+#                 continue
+
+#             if not info:
+#                 sys.exit()
+
+#             if info["object"] == "player2":
+#                 enemy_id = info["id"]
+
+#                 if info["joined"]:
+#                     new_enemy = Enemy2(ursina.Vec3(*info["position"]), enemy_id, info["username"])
+#                     new_enemy.health = info["health"]
+#                     enemies2.append(new_enemy)
+#                     continue
+
+#                 enemy = None
+
+#                 for e in enemies2:
+#                     if e.id == enemy_id:
+#                         enemy = e
+#                         break
+
+#                 if not enemy:
+#                     continue
+
+#                 if info["left"]:
+#                     enemies2.remove(enemy)
+#                     ursina.destroy(enemy)
+#                     continue
+
+#                 enemy.world_position = ursina.Vec3(*info["position"])
+#                 enemy.rotation_y = info["rotation"]
+
+#             elif info["object"] == "bullet":
+#                 b_pos = ursina.Vec3(*info["position"])
+#                 b_dir = info["direction"]
+#                 b_x_dir = info["x_direction"]
+#                 b_damage = info["damage"]
+#                 new_bullet = Bullet2(b_pos, b_dir, b_x_dir, n, b_damage, slave=True)
+#                 ursina.destroy(new_bullet, delay=2)
+
+#             elif info["object"] == "health_update":
+#                 enemy_id = info["id"]
+
+#                 enemy = None
+
+#                 if enemy_id == n.id:
+#                     enemy = player2
+#                 else:
+#                     for e in enemies2:
+#                         if e.id == enemy_id:
+#                             enemy = e
+#                             break
+
+#                 if not enemy:
+#                     continue
+
+#                 enemy.health = info["health"]
+    
+#     player2.gun.muzzle_flash = Entity(parent=player2.gun, position=(8, 5, 0), rotation=(0, 0, 0), scale=1, origin=(0, 0), model='cube', color=color.yellow, enabled=False)
+#     shootables_parent = Entity()
+#     mouse.traverse_target = shootables_parent
+
+#     def update():
+#         if player2.health > 0:
+#             global prev_pos, prev_dir
+
+#             if prev_pos != player2.world_position or prev_dir != player2.world_rotation_y:
+#                 n.send_player(player2)
+
+#             prev_pos = player2.world_position
+#             prev_dir = player2.world_rotation_y
+
+#         if player2.y < -10:
+#             player2.y = 60 
+
+#     def shoot():
+#         if not player2.gun.on_cooldown:
+#             player2.gun.on_cooldown = True
+#             player2.gun.muzzle_flash.enabled=True
+#             invoke(player2.gun.muzzle_flash.disable, delay=.05)
+#             invoke(setattr, player2.gun, 'on_cooldown', False, delay=.15)
+#             if mouse.hovered_entity and hasattr(mouse.hovered_entity, 'hp'):
+#                 mouse.hovered_entity.hp -= 10
+#                 mouse.hovered_entity.blink(color.red)   
+
+#     def input(key):
+#         if key == "left mouse down" and player2.health > 0:
+#             b_pos = player2.position + ursina.Vec3(0, 2, 0)
+#             bullet = Bullet2(b_pos, player2.world_rotation_y, -player2.camera_pivot.world_rotation_x, n)
+#             n.send_bullet(bullet)
+#             shoot()
+#             ursina.destroy(bullet, delay=2)
+#             Audio('assets/Audio/gun3.wav', loop=False, delay=1)
+#         if held_keys['escape']:
+#             quit()
+#         if key == 'space':
+#             Audio('assets/Audio/jump.wav', loop=False)
+
+#     def main():
+#         msg_thread = threading.Thread(target=receive, daemon=True)
+#         msg_thread.start()
+
+
+#     if __name__ == "__main__":
+#         main()
